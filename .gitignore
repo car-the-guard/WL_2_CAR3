@@ -1,0 +1,24 @@
+# 컴파일 목적 파일 및 중간 결과물
+obj/
+*.o
+
+# 빌드된 실행 파일 (프로젝트 폴더에 있는 실행 파일 이름)
+v2x_vT11
+
+# 로그 파일
+*.txt
+log*/
+
+# 커널 드라이버 빌드 관련 임시 파일 (rtl88x2bu 등 드라이버 수정 시 발생)
+*.ko
+*.mod.c
+*.mod
+*.o.cmd
+.tmp_versions/
+modules.order
+Module.symvers
+
+# 운영체제 및 에디터 임시 파일
+.DS_Store
+.vscode/
+.swp
