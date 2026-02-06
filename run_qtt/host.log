@@ -1,4 +1,4 @@
-file:///mnt/sdcard/run_qtt/test_spk.qml:398: TypeError: Cannot read property 'top' of undefined
+file:///mnt/sdcard/car3_Revised_1/run_qtt/test_spk.qml:398: TypeError: Cannot read property 'top' of undefined
 qt.qpa.wayland: Wayland does not support QWindow::requestActivate()
 
-(test_spk_host:1039): GStreamer-Audio-CRITICAL **: 10:49:05.853: file ../gst-libs/gst/audio/gstaudioringbuffer.c: line 2054 (gst_audio_ring_buffer_set_channel_positions): should not be reached
+(test_spk_host:1125): GStreamer-Audio-CRITICAL **: 08:27:26.152: file ../gst-libs/gst/audio/gstaudioringbuffer.c: line 2054 (gst_audio_ring_buffer_set_channel_positions): should not be reached

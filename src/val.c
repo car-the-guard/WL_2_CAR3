@@ -182,22 +182,52 @@ void *thread_val(void *arg) {
         uint64_t now = get_now_ms();
         if (now - last_report_ms >= 500) {
             last_report_ms = now;
+
+
+            // [2차 추가] 1. 내 현재 위치 스냅샷
+            pthread_mutex_lock(&g_driving_status.lock);
+            double cur_lat = g_driving_status.lat;
+            double cur_lon = g_driving_status.lon;
+            pthread_mutex_unlock(&g_driving_status.lock);
+
             int best_idx = -1;
             double min_dist = 999999.0;
 
             for (int i = 0; i < MAX_ACCIDENTS; i++) {
                 if (!accident_list[i].is_active) continue;
                 
+                // 2. 타임아웃 체크 (5초 경과 시 삭제)
                 if (now - accident_list[i].last_seen_ms > (TIMEOUT_SEC * 1000)) {
                     accident_list[i].is_active = false;
                     continue;
                 }
                 
-                if (accident_list[i].data.analysis.dist_3d < min_dist) {
-                    min_dist = accident_list[i].data.analysis.dist_3d;
-                    best_idx = i;
-                }
+                //if (accident_list[i].data.analysis.dist_3d < min_dist) {
+                    //min_dist = accident_list[i].data.analysis.dist_3d;
+                    //best_idx = i;
+                //}
+
+                // --- [수정 포인트] 실시간 거리 재계산 로직 추가 ---
+        // 리스트에 저장된 사고의 고정 좌표 추출
+        double target_lat = (double)accident_list[i].data.accident.lat_uDeg / 1000000.0;
+        double target_lon = (double)accident_list[i].data.accident.lon_uDeg / 1000000.0;
+
+        // 내 최신 위치(cur_lat, cur_lon) 기준으로 거리 업데이트
+        double updated_dist = calc_dist(cur_lat, cur_lon, target_lat, target_lon);
+        
+        // 리스트 데이터 갱신 (트래킹 반영)
+        accident_list[i].data.analysis.dist_3d = updated_dist;
+        accident_list[i].data.analysis.is_danger = (updated_dist < 100.0);
+        // ----------------------------------------------
+
+        // 갱신된 거리로 최단 거리 사고 선별
+        if (updated_dist < min_dist) {
+            min_dist = updated_dist;
+            best_idx = i;
             }
+        }
+
+            //}
 
             /* WL-2 로그 원인 추적: 500ms마다 활성 사고 수 / best_idx 출력 (best_idx>=0 일 때만 WL-2 로그 나옴) */
             {

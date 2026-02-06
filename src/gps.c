@@ -36,6 +36,10 @@ void *thread_gps(void *arg) {
     //// [고정값 설정] 차3 기준
     //double current_lat = 37.5618; // (사고차와 논리적 거리 약 1,000m)
 
+    // 이동 속도 설정 (약 0.0001도 ~= 11.1m)
+    // 1초에 한 번씩 약 11m씩 전진하도록 설정
+    double step = 0.0001;
+
      // [고정값 설정] 차2 기준 => 차1로부터 사고 정보 수신하는 지 확인하기 위해서 임시로 추가함.
     double current_lat = 37.5654; // (사고차와 논리적 거리 약 400m) 
     double current_lon = 126.9780;
@@ -43,6 +47,9 @@ void *thread_gps(void *arg) {
 
     while (g_keep_running) {
        
+        // --- [핵심] 위도값을 조금씩 줄여서 사고 지점으로 접근 시뮬레이션 ---
+        // 사고 지점이 37.5618 근처라면, 37.5654에서 계속 줄어들어야 접근함.
+        current_lat -= step;
 
         pthread_mutex_lock(&g_driving_status.lock);
         g_driving_status.lat = current_lat;
@@ -53,14 +60,22 @@ void *thread_gps(void *arg) {
         // 너무 잦은 업데이트 방지 (10Hz: 100ms)
         usleep(1000000); 
        
-        
+        // 매 초마다 현재 내 위치 로그 출력
+        printf("[GPS-SIM] 내 차 이동 중... Lat: %.6f, Lon: %.6f\n", current_lat, current_lon);
+
         // 10초마다 로그 출력
-        static int count = 0;
-        if (++count % 100 == 0) {
-                    printf("[GPS-FIXED] 차2 위치: Lat %.6f, Lon %.6f, Alt %.1f\n", 
-                    current_lat, current_lon, current_alt);
+        //static int count = 0;
+        //if (++count % 100 == 0) {
+                    //printf("[GPS-FIXED] 차2 위치: Lat %.6f, Lon %.6f, Alt %.1f\n", 
+                    //current_lat, current_lon, current_alt);
+        //}
+        // 만약 특정 지점까지 가면 멈추거나 리셋하는 로직 (선택사항)
+        if (current_lat < 37.5600) {
+            current_lat = 37.5654; // 다시 처음 위치로 리셋 (무한 반복 테스트용)
+            DBG_INFO("GPS: 위치 리셋 (시뮬레이션 반복)");
         }
     }
+
 
     DBG_INFO("Thread 7: GPS Client Module terminating.");
     return NULL;
