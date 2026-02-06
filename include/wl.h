@@ -8,7 +8,7 @@
 #include "proto_wl1.h"
 
 #define WL_PORT 5555
-
+//#define WL_PORT 8080
 
 typedef struct {
     int sock;

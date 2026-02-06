@@ -6,6 +6,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/time.h>
+#include <stddef.h> // offsetof 사용을 위해 필요
 
 #include "pkt.h"
 #include "queue.h"
@@ -13,11 +14,15 @@
 #include "val.h"
 #include "val_msg.h"
 #include "proto_wl1.h"
+#include "proto_wl2.h"
 #include "proto_wl3.h"
 #include "driving_mgr.h"
 
 
-extern queue_t q_rx_filter;     // T1 수신 → 필터 대기
+#define PKT_STX 0xFD
+#define PKT_ETX 0xFE
+
+//extern queue_t q_rx_filter;     // T1 수신 → 필터 대기
 extern queue_t q_rx_sec_rx;     // 필터 통과 → 보안 모듈
 extern queue_t q_pkt_val;       // RX 패킷 -> VAL 모듈 전달용
 extern queue_t q_sec_rx_pkt;    // 보안 검증 완료된 수신 패킷 큐
@@ -34,6 +39,13 @@ static uint64_t get_current_timestamp_us() {
     gettimeofday(&tv, NULL);
     return (uint64_t)(tv.tv_sec) * 1000000 + (uint64_t)(tv.tv_usec);
 }
+// [추가] 밀리초 단위 타임스탬프 반환 함수
+static uint64_t get_current_timestamp_ms() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
+
 void *sub_thread_pkt_tx(void *arg) {
     (void)arg;
     DBG_INFO("  - PKT-TX Sub-thread started (Dual-Path Aggregation).");
@@ -51,31 +63,34 @@ void *sub_thread_pkt_tx(void *arg) {
             if (pkt) {
                 memset(pkt, 0, sizeof(wl1_packet_t));
                 // Yocto(WL-3) 데이터를 무선 규격(WL-1)으로 맵핑
-                /* --- HEADER 조립 --- */
+                
+                
+                /* --- [1] HEADER 조립 --- */
                 pkt->header.version  = 0x01;
-                pkt->header.msg_type = 0x03; // WL-3 기반 사고 알림 타입
+                //pkt->header.msg_type = 0x03; // WL-3 기반 사고 알림 타입
+                pkt->header.msg_type = wl3->type; 
                 pkt->header.ttl      = 3;    // 최초 발생 패킷 TTL 설정
                 pkt->header.reserved = 0x00;
 
-                /* --- ACCIDENT 조립 (Yocto 데이터 활용) --- */
-                pkt->accident.accident_id = wl3->accident_id;
-                pkt->accident.type        = wl3->accident_type; // 필드명 변경 반영
-                pkt->accident.lane        = wl3->lane;
-                
-                // 위도/경도/고도 주입
+
+                memcpy(&(pkt->accident.direction), (uint8_t *)wl3 + 5, 20);
+                /* --- [3] 앞뒤 부족한 GPS 정보는 직접 참조(Reference)로 주입 --- */
+                // 위도/경도/고도는 WL-3에 없으므로 g_driving_status에서 직접 가져옵니다.
                 pkt->accident.lat_uDeg  = (int32_t)(g_driving_status.lat * 1000000.0);
                 pkt->accident.lon_uDeg  = (int32_t)(g_driving_status.lon * 1000000.0);
                 pkt->accident.alt_mm    = (int32_t)(g_driving_status.alt * 1000.0);
 
-                // 사고 정보의 방향(Direction)을 WL-4에서 받은 최신 주행 방향으로 설정
-                // 내 차량이 사고가 난 것이므로, 현재 내 주행 방향이 곧 사고 방향이다.
-                pthread_mutex_lock(&g_driving_status.lock);
-                pkt->accident.direction = (uint16_t)g_driving_status.heading;
-                pthread_mutex_unlock(&g_driving_status.lock);
-                
-                // 로그에서 %lX를 써야 64비트가 다 보임.
-                DBG_INFO("\x1b[32m[PKT-TX] 내 사고 조립 완료 (ID: 0x%lX, Dir: %d)\x1b[0m", 
-                    wl3->accident_id, pkt->accident.direction);
+
+
+                /* --- [4] 로그 출력 (ID, Lane, Sev, Time, Dir) --- */
+                // memcpy로 데이터가 잘 들어왔는지 확인합니다.
+                DBG_INFO("\x1b[32m[PKT-TX] 내 사고 조립 완료 (ACC_ID: 0x%lX, Lane: %d, Sev: %d, Time: %lu, Dir: %d)\x1b[0m", 
+                    pkt->accident.accident_id, 
+                    pkt->accident.lane, 
+                    pkt->accident.severity, 
+                    pkt->accident.accident_time,
+                    pkt->accident.direction);
+
                 
             }
                 free(wl3); // 사용이 끝난 WL-3 메모리 해제
@@ -108,8 +123,8 @@ void *sub_thread_pkt_tx(void *arg) {
 
                 // [4] 최종 보안 서명 큐로 전달
                 Q_push(&q_pkt_sec_tx, pkt);
-                DBG_INFO("[PKT-TX] WL-1 전체 패킷 조립 완료 (SenderID: 0x%X)", 
-                pkt->sender.sender_id);
+               DBG_INFO("[PKT-TX] WL-1 전체 패킷 조립 완료 (SenderID: 0x%X, AccID: 0x%lX)", 
+                pkt->sender.sender_id, pkt->accident.accident_id);
             } else {
                 free(pkt);
             }
@@ -121,7 +136,7 @@ void *sub_thread_pkt_tx(void *arg) {
 
 
 // --- [필터] 수신 패킷 → 우선 필터링 후 보안 큐에 전달 ---
-void *sub_thread_filter(void *arg) {
+/*void *sub_thread_filter(void *arg) {
     (void)arg;
     DBG_INFO("  - Filter Sub-thread started (q_rx_filter -> q_rx_sec_rx).");
 
@@ -137,14 +152,40 @@ void *sub_thread_filter(void *arg) {
         Q_push(&q_rx_sec_rx, pkt);
     }
     return NULL;
-}
+}*/
 
 // --- [PKT-RX] 수신 전담 서브 스레드 (필터 통과·보안 검증 완료 패킷만 수신) ---
 void *sub_thread_pkt_rx(void *arg) {
     (void)arg;
     DBG_INFO("  - PKT-RX Sub-thread started.");
 
-    while (g_keep_running) {
+      while (g_keep_running) {
+        // 보안 검증(T2)이 완료된 데이터 대기
+        wl1_packet_t *rx_pkt = Q_pop(&q_sec_rx_pkt);
+        
+        if (rx_pkt) {
+            // 자기 패킷 필터링 로직
+            // g_sender_id는 메인에서 선언된 내 기기의 ID 
+            if (rx_pkt->sender.sender_id == g_sender_id) {
+                DBG_INFO("PKT-RX: Loopback packet detected (ID: 0x%X). Self-dropping.", 
+                          rx_pkt->sender.sender_id);
+                free(rx_pkt); // VAL로 넘기지 않고 여기서 메모리 해제
+                continue;     // 다음 패킷 대기
+            }
+            DBG_INFO("PKT-RX: Incoming Packet (Sender: 0x%lX, Accident: 0x%lX)", 
+                     rx_pkt->sender.sender_id, rx_pkt->accident.accident_id);
+            // 2. [추가] VAL 스레드(T4)로 데이터 배달
+            wl1_packet_t *to_val = malloc(sizeof(wl1_packet_t));
+            if (to_val) {
+                memcpy(to_val, rx_pkt, sizeof(wl1_packet_t));
+                Q_push(&q_pkt_val, to_val); // VAL 큐로 전달
+                printf("[DEBUG-PKT] Packet pushed to q_pkt_val\n"); 
+            }
+            // [4] 판단 모듈(VAL, T4)로 전달하여 1km 필터링 및 사고 관리 수행
+        }
+        //free(rx_pkt);
+
+    /*while (g_keep_running) {
         wl1_packet_t *rx_pkt = Q_pop(&q_sec_rx_pkt);
         if (!rx_pkt) break;
 
@@ -154,7 +195,7 @@ void *sub_thread_pkt_rx(void *arg) {
             memcpy(to_val, rx_pkt, sizeof(wl1_packet_t));
             Q_push(&q_pkt_val, to_val);
             printf("[DEBUG-PKT] Packet pushed to q_pkt_val\n");
-        }
+        }*/
         free(rx_pkt);
     }
     return NULL;
@@ -178,92 +219,5 @@ void *thread_pkt(void *arg) {
     DBG_INFO("Thread 2: Packet Management Module terminating.");
     return NULL;
 }
-
-
-
-
-/*
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdbool.h>  // bool, true, false 정의 
-#include <string.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <pthread.h>
-
-#include "pkt.h"
-#include "queue.h"
-#include "debug.h"
-#include "val.h"
-#include "val_msg.h"
-#include "proto_wl1.h"
-
-// main.c에 선언된 전역 변수 및 큐 참조
-extern queue_t q_pkt_sec;
-extern queue_t q_sec_pkt;
-extern queue_t q_yocto_pkt;
-extern volatile bool g_keep_running;
-extern uint32_t g_sender_id;
-extern vehicle_status_t g_vehicle_status;
-// --- [PKT-TX] 송신 전담 서브 스레드 ---
-void *sub_thread_pkt_tx(void *arg) {
-    (void)arg;
-    while (g_keep_running) {
-        // 메인이나 SPI에서 송신 신호가 올 때까지 대기
-        void *req = Q_pop(&q_yocto_pkt);
-        if (req != NULL) {
-            wl1_packet_t *pkt = malloc(sizeof(wl1_packet_t));
-            if (pkt) {
-                memset(pkt, 0, sizeof(wl1_packet_t));
-                pkt->sender.sender_id = g_sender_id;
-                
-                pthread_mutex_lock(&g_vehicle_status.lock);
-                pkt->sender.lat_uDeg = (int32_t)(g_vehicle_status.latitude * 1000000);
-                pkt->sender.lon_uDeg = (int32_t)(g_vehicle_status.longitude * 1000000);
-                pthread_mutex_unlock(&g_vehicle_status.lock);
-                
-                DBG_INFO("PKT-TX: Request Received! Broadcasting Packet (ID: 0x%X)", g_sender_id);
-                Q_push(&q_pkt_sec, pkt);
-            }
-            free(req);
-        }
-    }
-    return NULL;
-}
-
-// --- [PKT-RX] 수신 전담 서브 스레드 ---
-void *sub_thread_pkt_rx(void *arg) {
-    (void)arg;
-    while (g_keep_running) {
-        // 무선/보안 모듈로부터 데이터가 올 때까지 대기
-        wl1_packet_t *rx_pkt = Q_pop(&q_sec_pkt);
-        if (rx_pkt) {
-            DBG_INFO("PKT-RX: Incoming Packet from 0x%X [Pos: %d, %d]", 
-                     rx_pkt->sender.sender_id, rx_pkt->sender.lat_uDeg, rx_pkt->sender.lon_uDeg);
-            free(rx_pkt); // 수신 후 메모리 해제
-        }
-    }
-    return NULL;
-}
-
-// --- 메인 PKT 관리 스레드 ---
-void *thread_pkt(void *arg) {
-    (void)arg;
-    pthread_t tx_tid, rx_tid;
-
-    DBG_INFO("Thread 2: Packet Module Management started.");
-
-    // 내부적으로 송신/수신 스레드를 각각 생성
-    pthread_create(&tx_tid, NULL, sub_thread_pkt_tx, NULL);
-    pthread_create(&rx_tid, NULL, sub_thread_pkt_rx, NULL);
-
-    // 두 스레드가 종료될 때까지 대기
-    pthread_join(tx_tid, NULL);
-    pthread_join(rx_tid, NULL);
-
-    DBG_INFO("Thread 2: Packet Module terminating.");
-    return NULL;
-}
-*/
 
 

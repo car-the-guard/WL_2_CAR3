@@ -1,7 +1,7 @@
 #include "wl.h"
 #include "debug.h"
 #include "queue.h"
-#include "i2c_io.h"
+//#include "i2c_io.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -11,7 +11,8 @@
 #include <net/if.h>
 extern volatile bool g_keep_running;
 
-extern queue_t q_rx_filter;      // RX 스레드가 수신 패킷을 넣는 큐 (필터링 대기)
+//extern queue_t q_rx_filter;      // RX 스레드가 수신 패킷을 넣는 큐 (필터링 대기)
+extern queue_t q_rx_sec_rx; 
 extern queue_t q_sec_tx_wl_tx;   // TX 스레드가 송신할 패킷을 가져오는 큐
 
  wl_ctx_t tx_ctx;
@@ -25,19 +26,20 @@ bool WL_init(wl_ctx_t *ctx, bool is_tx) {
     int yes = 1;
     setsockopt(ctx->sock, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
     
-    // wlan0 바인딩
+    /*// wlan0 바인딩
     struct ifreq ifr;
     memset(&ifr, 0, sizeof(ifr));
     snprintf(ifr.ifr_name, sizeof(ifr.ifr_name), "wlan0");
     setsockopt(ctx->sock, SOL_SOCKET, SO_BINDTODEVICE, (void *)&ifr, sizeof(ifr));
-
+    */
     if (is_tx) {
         setsockopt(ctx->sock, SOL_SOCKET, SO_BROADCAST, &yes, sizeof(yes));
         
         memset(&ctx->tx_addr, 0, sizeof(ctx->tx_addr));
         ctx->tx_addr.sin_family = AF_INET;
         ctx->tx_addr.sin_port = htons(WL_PORT);
-        inet_aton("10.0.0.255", &ctx->tx_addr.sin_addr);
+        //inet_aton("10.0.0.255", &ctx->tx_addr.sin_addr);
+        ctx->tx_addr.sin_addr.s_addr = inet_addr("10.0.0.255");
     } else {
         struct sockaddr_in addr;
         memset(&addr, 0, sizeof(addr));
@@ -58,15 +60,17 @@ void *thread_rx(void *arg) {
     while (g_keep_running) {
         wl1_packet_t *pkt = malloc(sizeof(wl1_packet_t));
         if (recv(rx_ctx.sock, pkt, sizeof(wl1_packet_t), 0) > 0) {
-            printf("\n\033[1;32m[T1-RX] Packet Received!\033[0m\n" );
+            //printf("\n\033[1;32m[T1-RX] Packet Received!\033[0m\n" );
+            DBG_INFO("\033[1;32m[RX] Packet Received!\033[0m");
             // 수신 성공 시 필터링 큐에 넣기 (필터 통과 후 보안 큐로 감)
-            Q_push(&q_rx_filter, pkt);
-            printf("pushing to q_rx_filter.\n");
+            //Q_push(&q_rx_filter, pkt);
+             Q_push(&q_rx_sec_rx, pkt);
+            //printf("pushing to q_rx_filter.\n");
             printf("\n");
             fflush(stdout);
         } else {
             free(pkt);
-            printf("\n\03WL-1 Packet receive failed\n\033");
+            DBG_ERR("\n\03WL-1 Packet receive failed\n\033");
         }
     }
     close(rx_ctx.sock);
@@ -76,7 +80,10 @@ void *thread_rx(void *arg) {
 
 void *thread_tx(void *arg) {
     (void)arg;
-    if (!WL_init(&tx_ctx, true)) return NULL;
+    if (!WL_init(&tx_ctx, true)) {
+        printf("\033[1;31m[CRITICAL] TX Thread failed to initialize socket!\033[0m\n");
+        return NULL;
+    }
     DBG_INFO("Thread 8: Wireless TX Module started.");
     wl_ctx_t *ctx = &tx_ctx; 
     
@@ -86,7 +93,7 @@ void *thread_tx(void *arg) {
         if (!pkt) continue;
 
         if (WL_send_msg(ctx, pkt, sizeof(wl1_packet_t))) {
-            printf("\n\033[1;32m[T8-TX] WL-1 Broadcast Success! (ID: 0x%X)\033[0m\n", 
+            DBG_INFO("\n\033[1;32m[T8-TX] WL-1 Broadcast Success! (ID: 0x%X)\033[0m\n", 
                    pkt->sender.sender_id);
 
                    fflush(stdout); // 로그가 밀리지 않고 즉시 출력

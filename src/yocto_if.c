@@ -1,8 +1,8 @@
 #include "yocto_if.h"
-#include "i2c_io.h"
+//#include "i2c_io.h"
 #include "queue.h"
-#include "val_msg.h"
-#include "proto_wl1.h"
+//#include "val_msg.h"
+//#include "proto_wl1.h"
 #include "proto_wl2.h"
 #include "proto_wl3.h"
 #include "proto_wl4.h"
@@ -13,17 +13,26 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/time.h>
+
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
+
+#include <fcntl.h>
+#include <termios.h>
+
 #include <string.h>
 #include "debug.h"
 #include "driving_mgr.h"
 #include "gps.h"
 
+#define PKT_STX 0xFD
+#define PKT_ETX 0xFE
+
+
 // I2C 설정 (환경에 맞게 수정 필요)
-#define I2C_BUS_YOCTO  "/dev/i2c-1"
-#define YOCTO_ADDR      0x42
+//#define I2C_BUS_YOCTO  "/dev/i2c-1"
+//#define YOCTO_ADDR      0x42
 #define HOST_NOTIFY_PORT 38474  // run.sh 등 호스트 프로세스와의 소켓 IPC 포트 (trigger_send 바이너리 호환)
 #define TRIGGER_BINARY_SIZE 6   /* 거리32 + 방향8 + 위험8 = 6 bytes (trigger_send.c와 동일) */
 #define MY_LANE 2               // 내 차선 번호 (1→L, 2→F, 3→R 기준)       
@@ -37,8 +46,10 @@ extern queue_t q_val_pkt_tx, q_val_yocto, q_rx_sec_rx;
 extern volatile bool g_keep_running;
 extern uint32_t g_sender_id;
 extern queue_t q_pkt_val;
-extern queue_t q_val_yocto;
-extern queue_t q_yocto_to_driving;
+extern queue_t q_val_yocto; // VAL -> Yocto (WL-2 송신: 가장 가까운 사고 정보)
+extern queue_t q_yocto_to_driving;  // Yocto_IF -> Driving (WL-4 수신: 주행정보)
+extern queue_t q_pkt_sec_tx;
+extern queue_t q_yocto_if_to_pkt_tx; // Yocto_IF -> PKT (WL-3 수신: 내 사고 직통 큐)
 
 // 시간 측정을 위한 유틸리티 함수
 static uint64_t get_now_us() {
@@ -72,6 +83,32 @@ static void wait_next_period(struct timespec *next, long ms) {
         next->tv_nsec -= 1000000000L;
     }
     clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, next, NULL);
+}
+
+
+// UART1 초기화 함수: 포트 설정(9600bps, 8N1, Raw Mode)
+int UART1_init(void) {
+    int fd = open(UART1_DEV, O_RDWR | O_NOCTTY | O_NDELAY);
+    if (fd < 0) return -1;
+
+    struct termios opt;
+    tcgetattr(fd, &opt);
+    cfsetispeed(&opt, B9600);
+    cfsetospeed(&opt, B9600);
+
+    opt.c_cflag |= (CLOCAL | CREAD);
+    opt.c_cflag &= ~PARENB;   // 패리티 없음
+    opt.c_cflag &= ~CSTOPB;   // 정지 비트 1
+    opt.c_cflag &= ~CSIZE;
+    opt.c_cflag |= CS8;       // 데이터 8비트
+
+    // 중요: 바이너리 패킷 보존을 위한 Raw Mode 설정
+    opt.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
+    opt.c_iflag &= ~(IXON | IXOFF | IXANY);
+    opt.c_oflag &= ~OPOST;
+
+    tcsetattr(fd, TCSANOW, &opt);
+    return fd;
 }
 
 void* thread_yocto_if(void* arg) {
