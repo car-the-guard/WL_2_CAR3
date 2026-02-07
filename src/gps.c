@@ -17,7 +17,7 @@ void GPS_init(void) {
 gps_data_t GPS_get_latest(void) {
     gps_data_t data;
     
-    // 안전하게 현재 전역 상태에 업데이트된 값을 가져온다.
+    // 현재 전역 상태에 업데이트된 값을 가져온다.
     pthread_mutex_lock(&g_driving_status.lock);
     data.lat = g_driving_status.lat;
     data.lon = g_driving_status.lon;
@@ -49,7 +49,8 @@ void *thread_gps(void *arg) {
        
         // --- [핵심] 위도값을 조금씩 줄여서 사고 지점으로 접근 시뮬레이션 ---
         // 사고 지점이 37.5618 근처라면, 37.5654에서 계속 줄어들어야 접근함.
-        current_lat -= step;
+        // -=였는데 거리가 멀어져서 +=로 변경
+        current_lat += step;
 
         pthread_mutex_lock(&g_driving_status.lock);
         g_driving_status.lat = current_lat;
@@ -70,7 +71,8 @@ void *thread_gps(void *arg) {
                     //current_lat, current_lon, current_alt);
         //}
         // 만약 특정 지점까지 가면 멈추거나 리셋하는 로직 (선택사항)
-        if (current_lat < 37.5600) {
+        //if (current_lat < 37.5704) {
+        if (current_lat > 37.5800) {
             current_lat = 37.5654; // 다시 처음 위치로 리셋 (무한 반복 테스트용)
             DBG_INFO("GPS: 위치 리셋 (시뮬레이션 반복)");
         }

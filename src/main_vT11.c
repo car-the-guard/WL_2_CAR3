@@ -16,16 +16,25 @@
 #include "val.h"
 #include "yocto_if.h" 
 #include "driving_mgr.h"
-#include "i2c_io.h"
+//#include "i2c_io.h"
 
+#include <fcntl.h>    // open, O_RDWR 등을 위해 필요
+#include <termios.h>  // UART 속도(Baudrate) 설정을 위해 권장
+#include <stddef.h> // offsetof 사용을 위해 필요
 
+#define PKT_STX 0xFD
+#define PKT_ETX 0xFE
+
+// 외부 파일(pkt.c, sec.c, wl.c 등)에서 정의된 스레드 함수들 선언
 extern void *thread_rx(void *arg);       // T1
 extern void *thread_sec_rx(void *arg);   // T2
 
 extern void *thread_val(void *arg);      // T4
 extern void *sub_thread_pkt_tx(void *arg);  
 extern void *sub_thread_pkt_rx(void *arg);  
-extern void *sub_thread_filter(void *arg);  // T1.5: 수신 후 필터 → 보안 큐
+
+//extern void *sub_thread_filter(void *arg);  // T1.5: 수신 후 필터 → 보안 큐
+
 extern void *thread_sec_tx(void *arg);   // T7
 extern void *thread_yocto_if(void *arg);
 extern void *thread_driving_manager(void *arg);
@@ -45,9 +54,8 @@ driving_status_t g_driving_status = {
     .lat = 0.0, .lon = 0.0, .alt = 0, .heading = 0
 };
 
-
-
-queue_t q_rx_filter;    // T1 -> 필터 (수신 직후)
+// [해결 2] 큐 이름 통일: 각 .c 파일들이 extern으로 기대하는 이름들
+//queue_t q_rx_filter;    // T1 -> 필터 (수신 직후)
 queue_t q_rx_sec_rx;    // 필터 -> T2 (필터 통과 패킷만)
 queue_t q_sec_rx_pkt;   // T2 -> T3
 queue_t q_val_pkt_tx;   // T4 -> T6
@@ -67,15 +75,21 @@ void signal_handler(int sig) {
     g_keep_running = false;
     
     // 블로킹 상태의 큐들을 깨우기 위해 NULL 푸시
-    Q_push(&q_rx_filter, NULL); Q_push(&q_rx_sec_rx, NULL); Q_push(&q_sec_rx_pkt, NULL);
+    //Q_push(&q_rx_filter, NULL);
+    Q_push(&q_rx_sec_rx, NULL); Q_push(&q_sec_rx_pkt, NULL);
     Q_push(&q_pkt_val, NULL); Q_push(&q_val_pkt_tx, NULL);
     Q_push(&q_pkt_sec_tx, NULL); Q_push(&q_sec_tx_wl_tx, NULL);
     Q_push(&q_val_yocto, NULL); Q_push(&q_yocto_to_driving, NULL);
     Q_push(&q_yocto_if_to_pkt_tx, NULL);
     
-    printf("\n[MAIN] Shutdown signal received. Cleaning up...\n");
+    DBG_INFO("\n[MAIN] Shutdown signal received. Cleaning up...\n");
 }
-
+// [추가] 밀리초 단위 타임스탬프 반환 함수
+static uint64_t get_current_timestamp_ms() {
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (uint64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
 
 
 // ==========================================
@@ -88,7 +102,7 @@ int main(int argc, char *argv[]) {
     
     
   
-    Q_init(&q_rx_filter);
+    //Q_init(&q_rx_filter);
     Q_init(&q_rx_sec_rx);
     Q_init(&q_sec_rx_pkt);
     Q_init(&q_val_pkt_tx);
@@ -96,30 +110,28 @@ int main(int argc, char *argv[]) {
     Q_init(&q_sec_tx_wl_tx);
     Q_init(&q_val_yocto);
     Q_init(&q_yocto_to_driving);
-
+    Q_init(&q_yocto_if_to_pkt_tx); 
     
     // 3. 하드웨어 초기화
+    debug_init(); // 로그 초기화
     GPS_init();
+
+    /*
     // I2C 디바이스들 초기화 (프로그램 시작 시 한 번)
     if (I2C_Display_Open_And_Init() < 0) {
         //printf("Failed to initialize I2C displays.\n");
     }
     //WL_init(&g_wl_tx_ctx, true);
-
+    */
     printf("--- Integrated V2X System Start ---\n");
     
-    // 4. 전처리기 사용 방식 수정 (함수 밖으로 분리)
-//#ifdef SIMULATION
-    //printf("[MAIN] Mode: SIMULATION\n");
-//#else
-    //printf("[MAIN] Mode: HARDWARE\n");
-//#endif
+
     // 2. 스레드 생성
-    pthread_t ths[11];
+    pthread_t ths[12];
    
 // 1. RX 파이프라인 (T1 → 필터 → T2 ~ T4)
     pthread_create(&ths[0], NULL, thread_rx, NULL);            // T1: Wireless RX → q_rx_filter
-    pthread_create(&ths[1], NULL, sub_thread_filter, NULL);  // 필터: q_rx_filter → q_rx_sec_rx
+    //pthread_create(&ths[1], NULL, sub_thread_filter, NULL);  // 필터: q_rx_filter → q_rx_sec_rx
     pthread_create(&ths[2], NULL, thread_sec_rx, NULL);      // T2: Security RX
     pthread_create(&ths[3], NULL, sub_thread_pkt_rx, NULL);  // T3: Packet RX
     pthread_create(&ths[4], NULL, thread_val, NULL);         // T4: Valuation (판단)
