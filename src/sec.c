@@ -11,8 +11,10 @@ extern queue_t q_sec_tx_wl_tx; // 송신: T7(SEC-TX) -> T8(WL-TX)
 
 
 extern queue_t q_rx_sec_rx;    // 수신: T1(WL-RX) -> T2(SEC-RX)
-extern queue_t q_sec_rx_pkt;   // 수신: T2(SEC-RX) -> T3(PKT)
+extern queue_t q_filter_sec_urgent;
 
+extern queue_t q_sec_rx_pkt;   // 수신: T2(SEC-RX) -> T3(PKT)
+extern queue_t q_filter_sec_rx;
 
 /**
  * [보안 로직] 송신 패킷에 64바이트 서명을 추가
@@ -62,7 +64,9 @@ void *thread_sec_rx(void *arg) {
 
     while (g_keep_running) {
 
-        wl1_packet_t *msg = Q_pop(&q_rx_sec_rx);
+        /*wl1_packet_t *msg = NULL;
+        //wl1_packet_t *msg = Q_pop(&q_rx_sec_rx);
+        wl1_packet_t *msg = Q_pop(&q_filter_sec_rx);
         if (msg == NULL) break; 
 
         if (SEC_verify(msg)) {
@@ -71,8 +75,38 @@ void *thread_sec_rx(void *arg) {
         } else {
             DBG_WARN("SEC: Verification failed for 0x%X! Dropping.", msg->sender.sender_id);
             free(msg); 
+        }*/
+        wl1_packet_t *pkt = NULL;
+
+        // 1. [핵심] 긴급 큐(Urgent) 먼저 확인
+        pkt = Q_pop_nowait(&q_filter_sec_urgent); // 블로킹 없이 즉시 확인
+
+        // 2. 긴급 패킷이 없다면 일반 큐 확인
+        if (pkt == NULL) {
+            pkt = Q_pop(&q_filter_sec_rx); // 일반 패킷은 데이터가 올 때까지 대기
+        }
+
+        if (pkt == NULL) {
+            usleep(1000); 
+            continue;
+        }
+
+        // --- 이후 보안 검증 로직 수행 ---
+        // VerifySignature(pkt); ...
+        
+        // 검증 성공 후 다음 단계(T3)로 전송
+        //Q_push(&q_sec_rx_pkt, pkt);
+        // 4. 보안 검증 수행
+        if (SEC_verify(pkt)) {
+            Q_push(&q_sec_rx_pkt, pkt); 
+        } else {
+            DBG_WARN("SEC: Verification failed for 0x%X! Dropping.", pkt->sender.sender_id);
+            free(pkt); 
         }
     }
+    //}
+    //return NULL;  
+    //}
 
     DBG_INFO("Thread 2: Security RX Module terminating.");
     return NULL;

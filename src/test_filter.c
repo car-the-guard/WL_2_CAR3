@@ -35,23 +35,28 @@ void run_filter_test() {
     // 상황 1: 루프백 차단 테스트 (내 ID와 동일)
     printf("1. 내 패킷(Loopback) 차단 테스트 중...\n");
     Q_push(&q_rx_filter, create_test_packet(g_sender_id, 0.001, 0, 1, 1));
+    sleep(3);
     
     // 상황 2: 후방 사고 차단 테스트 (is_forward 확인)
     printf("2. 후방 사고(내 뒤 100m) 차단 테스트 중...\n");
     // 위도가 북쪽일 때 위도를 깎으면 내 뒤쪽(남쪽)이 됨
     Q_push(&q_rx_filter, create_test_packet(0xAAAA, -0.001, 0, 1, 1));
+    sleep(3);
 
     // 상황 3: RSU 긴급 통과 테스트 (Sender ID <= 0x0FFF)
     printf("3. RSU 패킷(긴급 큐) 통과 테스트 중...\n");
     Q_push(&q_rx_filter, create_test_packet(0x0100, 0.002, 0, 1, 1));
+    sleep(3);
 
     // 상황 4: 200m 이내 초근접 사고 (긴급 큐)
     printf("4. 초근접 사고(50m) 긴급 통과 테스트 중...\n");
     Q_push(&q_rx_filter, create_test_packet(0xBBBB, 0.0004, 0, 1, 1));
+    sleep(3);
 
     // 상황 5: 3차선 환경 차선 걸침 (1, 2차선 점유 0x03)
     printf("5. 다중 차선 점유(0x03) 업데이트 테스트 중...\n");
     Q_push(&q_rx_filter, create_test_packet(0xCCCC, 0.003, 0, 2, 0x03));
+    sleep(3);
 
     // 상황 6: 자동 해제(Passing) 테스트
     printf("6. 사고 지점 통과(Passing Logic) 시뮬레이션...\n");

@@ -26,6 +26,7 @@
 #define PKT_ETX 0xFE
 
 extern void *run_filter_test(void *arg);
+extern void *thread_filter(void *arg);
 
 // 외부 파일(pkt.c, sec.c, wl.c 등)에서 정의된 스레드 함수들 선언
 extern void *thread_rx(void *arg);       // T1
@@ -88,6 +89,10 @@ void signal_handler(int sig) {
     Q_push(&q_pkt_sec_tx, NULL); Q_push(&q_sec_tx_wl_tx, NULL);
     Q_push(&q_val_yocto, NULL); Q_push(&q_yocto_to_driving, NULL);
     Q_push(&q_yocto_if_to_pkt_tx, NULL);
+
+    Q_push(&q_rx_filter, NULL);
+    Q_push(&q_filter_sec_rx, NULL);
+    Q_push(&q_filter_sec_urgent, NULL);
     
     DBG_INFO("\n[MAIN] Shutdown signal received. Cleaning up...\n");
 }
@@ -142,7 +147,7 @@ int main(int argc, char *argv[]) {
    
 // 1. RX 파이프라인 (T1 → 필터 → T2 ~ T4)
     pthread_create(&ths[0], NULL, thread_rx, NULL);            // T1: Wireless RX → q_rx_filter
-    //pthread_create(&ths[1], NULL, sub_thread_filter, NULL);  // 필터: q_rx_filter → q_rx_sec_rx
+    pthread_create(&ths[1], NULL, thread_filter, NULL);  // 필터: q_rx_filter → q_rx_sec_rx
     pthread_create(&ths[2], NULL, thread_sec_rx, NULL);      // T2: Security RX
     pthread_create(&ths[3], NULL, sub_thread_pkt_rx, NULL);  // T3: Packet RX
     pthread_create(&ths[4], NULL, thread_val, NULL);         // T4: Valuation (판단)
