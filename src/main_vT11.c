@@ -25,6 +25,8 @@
 #define PKT_STX 0xFD
 #define PKT_ETX 0xFE
 
+extern void *run_filter_test(void *arg);
+
 // 외부 파일(pkt.c, sec.c, wl.c 등)에서 정의된 스레드 함수들 선언
 extern void *thread_rx(void *arg);       // T1
 extern void *thread_sec_rx(void *arg);   // T2
@@ -67,6 +69,11 @@ queue_t q_yocto_to_driving; // T9 -> T5
 queue_t q_yocto_pkt_tx;
 queue_t q_wl_sec;
 queue_t q_yocto_if_to_pkt_tx;
+
+
+queue_t q_rx_filter;          // T1 -> 필터
+queue_t q_filter_sec_rx;      // 필터 -> T2 (일반) - 기존 q_rx_sec_rx 대신 사용하거나 별도 생성
+queue_t q_filter_sec_urgent;  // 필터 -> T2 (긴급)
 // ==========================================
 // 2. 종료 및 초기화 로직
 // ==========================================
@@ -111,6 +118,10 @@ int main(int argc, char *argv[]) {
     Q_init(&q_val_yocto);
     Q_init(&q_yocto_to_driving);
     Q_init(&q_yocto_if_to_pkt_tx); 
+
+    Q_init(&q_rx_filter);
+    Q_init(&q_filter_sec_rx);     
+    Q_init(&q_filter_sec_urgent);
     
     // 3. 하드웨어 초기화
     debug_init(); // 로그 초기화
@@ -150,7 +161,8 @@ int main(int argc, char *argv[]) {
     
     
     // 3. 메인 모니터링 루프
-    
+    pthread_t test_th;
+    pthread_create(&test_th, NULL, run_filter_test, NULL);
     
     while (g_keep_running) {
         
@@ -160,6 +172,7 @@ int main(int argc, char *argv[]) {
     // 4. 종료 및 자원 해제
     for (int i = 0; i < 11; i++) {
         pthread_join(ths[i], NULL);
+        pthread_join(test_th, NULL);
     }
 
     pthread_mutex_destroy(&g_driving_status.lock);

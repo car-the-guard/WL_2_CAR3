@@ -66,21 +66,7 @@ uint64_t get_now_ms() {
     return (uint64_t)tv.tv_sec * 1000 + (uint64_t)tv.tv_usec / 1000;
 }
 
-double calc_dist(double lat1, double lon1, double lat2, double lon2) {
-    double dlat = (lat2 - lat1) * 111319.9;
-    double dlon = (lon2 - lon1) * 88804.0;
-    return sqrt(dlat * dlat + dlon * dlon);
-}
 
-int get_angle_diff(int a, int b) {
-    int diff = a - b;
-    if (diff < 0) diff = -diff; // 정수 절대값 처리
-    
-    if (diff > 180) {
-        diff = 360 - diff;
-    }
-    return diff;
-}
 
 
 void *thread_val(void *arg) {
@@ -215,6 +201,19 @@ void *thread_val(void *arg) {
 
                 // 내 최신 위치(cur_lat, cur_lon) 기준으로 거리 업데이트
                 double updated_dist = calc_dist(cur_lat, cur_lon, target_lat, target_lon);
+                
+                // [Passing Logic] 내가 사고 지점을 통과했는지 판별
+                bool is_behind = !is_forward(cur_lat, cur_lon, g_driving_status.heading, target_lat, target_lon);
+
+                // 지점을 통과(뒤쪽)했고 거리가 15m 이상 벌어지면 리스트에서 즉시 제거
+                if (is_behind && updated_dist > 15.0) {
+                    accident_list[i].is_active = false;
+                    printf("[VAL-PASS] ID 0x%lX 지점 통과 -> 팝업 제거\n", accident_list[i].data.accident.accident_id);
+                    continue;
+                }
+                            
+                
+                
                 
                 // 리스트 데이터 갱신 (트래킹 반영)
                 accident_list[i].data.analysis.dist_3d = updated_dist;
