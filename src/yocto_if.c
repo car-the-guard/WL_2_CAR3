@@ -113,88 +113,198 @@ int UART1_init(void) {
 
 void* thread_yocto_if(void* arg) {
     (void)arg;
+    
+    // 1. UART1 포트 오픈
+    int uart_fd = UART1_init();
+    if (uart_fd < 0) {
+        DBG_ERR("[T9] UART1 (/dev/ttyAMA1) Open Failed!");
+        return NULL;
+    }
+
+    // 2. 정밀 시간 설정을 위한 구조체
     struct timespec next_time;
     clock_gettime(CLOCK_MONOTONIC, &next_time);
-    uint32_t loop_cnt = 0;
-    const uint32_t wl4_trigger = (PERIOD_WL4_S * 1000) / PERIOD_YOCTO_MS;
 
-    DBG_INFO("Thread 9: Yocto Interface Module started.");
-while (g_keep_running) {
-        // 정밀 주기 제어 (예: 100ms)
+    //uint32_t loop_cnt = 0;
+    // 50ms 루프 기준으로 30초는 600번 루프 (30,000ms / 50ms = 600)
+    //const uint32_t wl4_trigger = (PERIOD_WL4_S * 1000) / PERIOD_YOCTO_MS;
+
+    DBG_INFO("Thread 9: Yocto Interface Module started (UART3 Mode).");
+    DBG_INFO("[T9] UART3 모듈 시작 (WL2/3: 50ms, WL4: 30s 주기)");
+
+    while (g_keep_running) {
+        // 50ms 정밀 주기 제어 (WL-2, WL-3을 위해 빠르게 회전)
         wait_next_period(&next_time, PERIOD_YOCTO_MS);
 
-        uint8_t rx_buf[128] = {0};
-        int rx_len = 0;
-
-#ifdef SIMULATION
-        /*
-        // --- 시뮬레이션 데이터 생성 ---
-        if (loop_cnt > 0 && loop_cnt % 100 == 0) { // 사고(WL-3)
-            rx_buf[0] = TYPE_WL3;
-            uint64_t aid = 2000 + loop_cnt;
-            memcpy(&rx_buf[15], &aid, 8); 
-            rx_len = 23;
-        } else if (loop_cnt % wl4_trigger == 0) { // 주행(WL-4)
-            rx_buf[0] = TYPE_WL4;
-            uint16_t hdg = 180; int32_t alt = 150;
-            memcpy(&rx_buf[1], &hdg, 2); memcpy(&rx_buf[3], &alt, 4);
-            rx_len = 17;
-        }
-        */
-#else
-        // --- 실제 하드웨어 수신 (i2c_io.c의 함수 사용) ---
-        // I2C_BUS_YOCTO는 "/dev/i2c-1", YOCTO_ADDR은 상대방 주소
-        rx_len = I2C_read_data(I2C_BUS_YOCTO, YOCTO_ADDR, rx_buf, sizeof(rx_buf));
-#endif
-
-        // [1] 데이터 수신 처리
-        if (rx_len > 0) {
-            if (rx_buf[0] == TYPE_WL3) {
-                wl3_packet_t *wl3 = malloc(sizeof(wl3_packet_t));
-                if (wl3) {
-                    memcpy(wl3, rx_buf, sizeof(wl3_packet_t));
-                    Q_push(&q_pkt_val, wl3);
-                    //printf("\x1b[31m[T9-RX] WL-3 High-Priority (AID:0x%lX)\x1b[0m\n", wl3->accident_id);
-                }
-            } else if (rx_buf[0] == TYPE_WL4) {
-                wl4_packet_t *wl4 = malloc(sizeof(wl4_packet_t));
-                if (wl4) {
-                    memcpy(wl4, rx_buf, sizeof(wl4_packet_t));
-                    Q_push(&q_yocto_to_driving, wl4);
-                    //printf("\x1b[34m[T9-RX] WL-4 Periodic Update\x1b[0m\n");
-                }
+        // --- [A] 송신: VAL에서 온 가장 가까운 사고 정보(WL-2)를 Yocto로 전송 ---
+        // 10바이트 규격(16비트 거리 포함)으로 조립된 WL-2 패킷을 꺼냅니다.
+        /*wl2_packet_t *wl2 = (wl2_packet_t *)Q_pop_nowait(&q_val_yocto);
+        if (wl2) {
+            // 정수형으로 통일된 10바이트 구조체를 UART로 송신합니다.
+            int expected_len = sizeof(wl2_packet_t); // 10바이트
+            int tx_res = write(uart_fd, wl2, sizeof(wl2_packet_t));
+            // [수정] 0보다 큰 것뿐만 아니라, 전체 길이가 다 나갔는지 확인
+            if (tx_res == expected_len) {
+                // 성공: 10바이트 완벽 전송
+                // DBG_INFO("[T9-TX] WL-2 Full Sent (%d bytes)", tx_res);
+            } else if (tx_res > 0) {
+                // 일부 전송됨 (데이터 유실 가능성)
+                DBG_WARN("[T9-TX] WL-2 Partial Write: %d / %d bytes", tx_res, expected_len);
+            } else {
+                // 전송 실패 (포트 오류 등)
+                perror("[T9-TX] UART Write Error");
             }
-        }
+            free(wl2);
+            wl2 = NULL;
+        }*/
+        //uint8_t rx_buf[256] = {0};
+        //int rx_len = read(uart_fd, rx_buf, sizeof(rx_buf)); // <-- read 호출이 여기 있어야 함
 
-        // [2] 데이터 송신 처리 (WL-2 결과 전송)
+        // --- [A] 송신: VAL에서 온 가장 가까운 사고 정보(WL-2) 처리 ---
         wl2_packet_t *wl2 = (wl2_packet_t *)Q_pop_nowait(&q_val_yocto);
         if (wl2) {
-#ifdef SIMULATION
+            // 1. UART로 Yocto에 10바이트 규격 패킷 전송
+            int expected_len = sizeof(wl2_packet_t);
+            int tx_res = write(uart_fd, wl2, expected_len);
+
+            if (tx_res == expected_len) {
+                // 2. [추가] 송신 성공 시, 호스트(38474 포트)로 디스플레이용 바이너리 전송
+                // 주석에 있던 로직을 UART 모드에 맞춰 통합
+                uint16_t dist = wl2->distance; // WL-2 구조체의 거리 정보
+                uint8_t sev = wl2->severity;  // 위험도 (0: 일반, 1: 위험)
+                
+                // 차선(lane)에 따른 방향 설정 (1:L, 2:F, 3:R)
+                uint8_t dir = (wl2->lane == 1) ? 'L' : (wl2->lane == 2) ? 'F' : (wl2->lane == 3) ? 'R' : 'F';
+                // 위험도 매핑 (sev 0->1, 1->3 등 필요에 따라 조정)
+                uint8_t danger = (sev == 0) ? 1 : 3; 
+
+                uint32_t dist_be = htonl((uint32_t)dist); // 32bit Big-Endian 변환
+                unsigned char bin[TRIGGER_BINARY_SIZE];
+                
+                memcpy(bin, &dist_be, 4);
+                bin[4] = dir;
+                bin[5] = danger;
+
+                // 디스플레이 프로세스로 전송
+                send_binary_to_host(bin, TRIGGER_BINARY_SIZE);
+                
+                DBG_INFO("[T9-TX] WL-2 Sent (UART & Host Notify) -> Dist:%dm, Dir:%c", dist, dir);
+            } else {
+                DBG_WARN("[T9-TX] UART Write Failed or Partial: %d/%d", tx_res, expected_len);
+            }
+
+            free(wl2);
+            wl2 = NULL;
+        }
+
+
+        // --- [B] 수신: Yocto로부터 데이터 읽기 (WL-3, WL-4) ---
+        uint8_t rx_buf[512] = {0};
+        int rx_len = read(uart_fd, rx_buf, sizeof(rx_buf));
+
+        if (rx_len > 0) {
+        //uint8_t type = rx_buf[0];
+        //DBG_INFO("yocto로부터 uart3으로 메세지 받음 %lX, %d, %d \r\n", rx_buf, rx_len, type);
+        // [수정] 여기서 바로 type을 쓰면 에러가 납니다. (아직 선언 안 됨)
+            // 대신 데이터가 들어왔다는 사실과 길이만 먼저 찍어보세요.
+        DBG_INFO("[T9] UART Data Received: %d bytes", rx_len);
+        
+        // [검색 루프] 뭉친 데이터 속에서 PKT_STX(0xFD)를 찾음
+        for (int i = 0; i < rx_len; i++) {
+            // 1. 시작 신호(0xFD) 탐색
+            if (rx_buf[i] == PKT_STX) {
+                if (i + 1 >= rx_len) break; // 타입 확인 불가
+
+                uint8_t type = rx_buf[i + 1];
+
+                // --- WL-4 처리 (8바이트) ---
+                // Case 1: WL-4 수신 (8바이트: STX + Type + Data(5) + ETX)
+                if (type == TYPE_WL4 && (i + 7) < rx_len) {
+                    if (rx_buf[i + 7] == PKT_ETX) {
+                        wl4_packet_t *wl4 = malloc(sizeof(wl4_packet_t));
+                       if (wl4) {
+                                memcpy(wl4, &rx_buf[i], sizeof(wl4_packet_t));
+                                Q_push(&q_yocto_to_driving, wl4);
+                                
+                                uint16_t dir = wl4_get_direction(*wl4);
+                                DBG_INFO("[T9-RX] WL-4 수신: 방향(%d), 시간(%d)", dir, wl4->timestamp);
+                            }
+                            i += 7; // 패킷 크기만큼 건너뜀
+                            continue;
+                        }
+                }
+
+               // --- WL-3 처리 (26바이트로 수정) ---
+                // Case 2: WL-3 수신 (26바이트: STX + Type + Pad + Time(2) + Data(20) + ETX)
+                else if (type == TYPE_WL3 && (i + 25) < rx_len) {
+                    if (rx_buf[i + 25] == PKT_ETX) {
+                        wl3_packet_t *wl3 = malloc(sizeof(wl3_packet_t));
+                       if (wl3) {
+                                // 구조체 크기(26바이트)만큼 한 번에 복사
+                                memcpy(wl3, &rx_buf[i], sizeof(wl3_packet_t));
+                                // WL-3 특정 필드 추출 (필요 시)
+                                //wl3->accident_id = *((unsigned long long*)(rx_buf + i + 16));
+                                //wl3->lane = *(rx_buf + i + 5);
+                                // [참고] 이제 memcpy로 모든 필드가 들어왔으므로 
+                                // 아래와 같은 수동 추출은 생략하거나 구조체 멤버로 접근하면 됩니다.
+                                // 예: wl3->accident_id = ... (이미 memcpy로 들어옴)
+
+                                Q_push(&q_yocto_if_to_pkt_tx, wl3);
+                                DBG_INFO("\x1b[32m[T9-RX] WL-3 수신: 내 사고 데이터 전달\x1b[0m");
+                         
+                            }
+                        i += 25; // [수정] 패킷 크기만큼 점프
+                        continue;
+                    }
+                }
+
+
+
+
+
+
+
+            }
+       } // for loop 끝
+        } // if rx_len 끝
+    } // while loop 끝
+
+    close(uart_fd);
+    return NULL;
+}
+
+
+
+
+
+        // [2] 데이터 송신 처리 (WL-2 결과 전송)
+        /*wl2_packet_t *wl2 = (wl2_packet_t *)Q_pop_nowait(&q_val_yocto);
+        if (wl2) {
+
             /*uint16_t distance = (wl2->dist_rsv >> 4); 
             */
-            printf("\x1b[35m[T9-TX-SIM] WL-2 Result -> Dist: %dm, Lane: %d\x1b[0m\n", wl2_get_distance(wl2), wl2->lane);
+            //printf("\x1b[35m[T9-TX-SIM] WL-2 Result -> Dist: %dm, Lane: %d\x1b[0m\n", wl2_get_distance(wl2), wl2->lane);
 
-#else
+
             // 실제 I2C 전송 (i2c_io.c의 함수 사용)
-            int tx_res = I2C_write_data(I2C_BUS_YOCTO, YOCTO_ADDR, (uint8_t*)wl2, sizeof(wl2_packet_t));
+            /*int tx_res = I2C_write_data(I2C_BUS_YOCTO, YOCTO_ADDR, (uint8_t*)wl2, sizeof(wl2_packet_t));
             if (tx_res > 0) {
                 printf("\x1b[35m[T9-TX-HW] WL-2 Result Sent to Yocto\x1b[0m\n");
                 /* wl2 파싱 후 trigger_send_binary 호환 6바이트 전송: 거리(32bit BE) + 방향(8bit) + 위험도(8bit) */
-                uint16_t dist = wl2_get_distance(wl2);
+                /*uint16_t dist = wl2_get_distance(wl2);
                 uint8_t sev = wl2_get_severity(wl2);
                 uint8_t dir = (wl2->lane == 1) ? 'L' : (wl2->lane == 2) ? 'F' : (wl2->lane == 3) ? 'R' : (uint8_t)'F';
                 uint8_t danger = (sev == 0) ? 1 : (sev == 1) ? 2 : 3;  /* 위험도 1, 2, 3 */
-                uint32_t dist_be = htonl((uint32_t)dist);
+                /*uint32_t dist_be = htonl((uint32_t)dist);
                 unsigned char bin[TRIGGER_BINARY_SIZE];
                 memcpy(bin, &dist_be, 4);
                 bin[4] = dir;
                 bin[5] = danger;
                 send_binary_to_host(bin, TRIGGER_BINARY_SIZE);
             }
-#endif
             free(wl2); // 송신 후 메모리 해제
         }
         loop_cnt++;
     }
     return NULL;
-}
+}*/

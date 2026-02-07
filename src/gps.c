@@ -71,7 +71,8 @@ void *thread_gps(void *arg) {
                     //current_lat, current_lon, current_alt);
         //}
         // 만약 특정 지점까지 가면 멈추거나 리셋하는 로직 (선택사항)
-        if (current_lat < 37.5704) {
+        //if (current_lat < 37.5704) {
+        if (current_lat > 37.5800) {
             current_lat = 37.5654; // 다시 처음 위치로 리셋 (무한 반복 테스트용)
             DBG_INFO("GPS: 위치 리셋 (시뮬레이션 반복)");
         }

@@ -23,6 +23,9 @@
 #define TIMEOUT_SEC   5        // // 5초간 수신 없으면 리스트에서 삭제
 #define HEADING_LIMIT 45       // 45도 이내 차이만 동일 방향으로 간주
 
+#define MODE_TX    0  // 내 사고 송신
+#define MODE_RELAY 1  // 타인 사고 재전송
+#define MODE_ALERT 2  // 위험 경고 (LN, TYPE, DIST 표시)
 
 #define HOST_NOTIFY_PORT 38474
 #define TRIGGER_BINARY_SIZE 6  /* 거리32 + 방향8 + 위험8 (trigger_send_binary 호환) */
@@ -206,13 +209,30 @@ void *thread_val(void *arg) {
                     accident_list[i].is_active = false;
                     continue;
                 }
+
+                double target_lat = (double)accident_list[i].data.accident.lat_uDeg / 1000000.0;
+                double target_lon = (double)accident_list[i].data.accident.lon_uDeg / 1000000.0;
+
+                // 내 최신 위치(cur_lat, cur_lon) 기준으로 거리 업데이트
+                double updated_dist = calc_dist(cur_lat, cur_lon, target_lat, target_lon);
                 
+                // 리스트 데이터 갱신 (트래킹 반영)
+                accident_list[i].data.analysis.dist_3d = updated_dist;
+                accident_list[i].data.analysis.is_danger = (updated_dist < 100.0);
+                
+                        // 갱신된 거리로 최단 거리 사고 선별
+                if (updated_dist < min_dist) {
+                    min_dist = updated_dist;
+                    best_idx = i;
+                    }
+                } // for 루프 끝
                 //if (accident_list[i].data.analysis.dist_3d < min_dist) {
                     //min_dist = accident_list[i].data.analysis.dist_3d;
                     //best_idx = i;
                 //}
-            }
-            // --- [수정 포인트] 실시간 거리 재계산 로직 추가 ---
+            //}
+            
+            /*// --- [수정 포인트] 실시간 거리 재계산 로직 추가 ---
         // 리스트에 저장된 사고의 고정 좌표 추출
         double target_lat = (double)accident_list[i].data.accident.lat_uDeg / 1000000.0;
         double target_lon = (double)accident_list[i].data.accident.lon_uDeg / 1000000.0;
@@ -224,13 +244,13 @@ void *thread_val(void *arg) {
         accident_list[i].data.analysis.dist_3d = updated_dist;
         accident_list[i].data.analysis.is_danger = (updated_dist < 100.0);
         // ----------------------------------------------
-
+        */
         // 갱신된 거리로 최단 거리 사고 선별
-        if (updated_dist < min_dist) {
+        /*if (updated_dist < min_dist) {
             min_dist = updated_dist;
             best_idx = i;
             }
-        }
+        }*/
 
             //}
 

@@ -75,7 +75,8 @@ void signal_handler(int sig) {
     g_keep_running = false;
     
     // 블로킹 상태의 큐들을 깨우기 위해 NULL 푸시
-    Q_push(&q_rx_filter, NULL); Q_push(&q_rx_sec_rx, NULL); Q_push(&q_sec_rx_pkt, NULL);
+    //Q_push(&q_rx_filter, NULL);
+    Q_push(&q_rx_sec_rx, NULL); Q_push(&q_sec_rx_pkt, NULL);
     Q_push(&q_pkt_val, NULL); Q_push(&q_val_pkt_tx, NULL);
     Q_push(&q_pkt_sec_tx, NULL); Q_push(&q_sec_tx_wl_tx, NULL);
     Q_push(&q_val_yocto, NULL); Q_push(&q_yocto_to_driving, NULL);
