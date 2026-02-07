@@ -1,6 +1,4 @@
-Failed to create wl_display (No such file or directory)
-qt.qpa.plugin: Could not load the Qt platform plugin "wayland" in "" even though it was found.
-This application failed to start because no Qt platform plugin could be initialized. Reinstalling the application may fix this problem.
+file:///mnt/sdcard/car3_Revised_1/run_qtt/test_spk.qml:398: TypeError: Cannot read property 'top' of undefined
+qt.qpa.wayland: Wayland does not support QWindow::requestActivate()
 
-Available platform plugins are: eglfs, linuxfb, minimal, minimalegl, offscreen, vnc, wayland-egl, wayland, wayland-xcomposite-egl, wayland-xcomposite-glx, xcb.
-
+(test_spk_host:1094): GStreamer-Audio-CRITICAL **: 11:39:35.305: file ../gst-libs/gst/audio/gstaudioringbuffer.c: line 2054 (gst_audio_ring_buffer_set_channel_positions): should not be reached

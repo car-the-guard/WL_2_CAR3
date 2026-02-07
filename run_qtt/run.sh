@@ -6,8 +6,8 @@ cd "$(dirname "$0")"
 # echo "Weston 서버 재시작 중..."
 # sudo systemctl stop weston
 # sleep 2
-# sudo systemctl start weston
-# sleep 2
+sudo systemctl start weston
+sleep 2
 
 
 echo "기존 sound_trigger / test_spk_host 프로세스 정리..."
