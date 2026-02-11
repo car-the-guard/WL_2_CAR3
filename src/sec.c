@@ -64,6 +64,29 @@ void *thread_sec_rx(void *arg) {
 
     while (g_keep_running) {
 
+        wl1_packet_t *pkt = NULL;
+        // [STEP 1] 우선순위 체크: 긴급 큐부터 확인 (기다리지 않음)
+        pkt = Q_pop_nowait(&q_filter_sec_urgent);
+        // DBG_INFO("[SEC-RX] Verifying packet from 11 0x%X", pkt->sender.sender_id);
+
+        Q_push(&q_sec_rx_pkt, pkt); 
+        
+        // [STEP 2] 긴급 패킷이 없으면 일반 큐에서 대기 (여기서 블로킹)
+        if (pkt == NULL) {
+            // 일반 큐에서 데이터를 기다림. 긴급이 들어오면 filter가 깨워줄 수도 있지만,
+            // 구조상 여기서 너무 오래 잡혀있지 않게 pop_timeout 등을 쓰는 것도 방법입니다.
+            // 일단은 일반적인 Q_pop으로 구현하되, 긴급 처리를 위해 짧은 sleep 후 루프를 돌립니다.
+            pkt = Q_pop_nowait(&q_filter_sec_rx);
+            // DBG_INFO("[SEC-RX] Verifying packet from 22 0x%X", pkt->sender.sender_id);
+
+            Q_push(&q_sec_rx_pkt, pkt); 
+            
+            if (pkt == NULL) {
+                usleep(5000); // 데이터가 아예 없으면 5ms 쉬고 다시 긴급 큐부터 확인
+                continue;
+            }
+        }
+
         /*wl1_packet_t *msg = NULL;
         //wl1_packet_t *msg = Q_pop(&q_rx_sec_rx);
         wl1_packet_t *msg = Q_pop(&q_filter_sec_rx);
@@ -76,20 +99,20 @@ void *thread_sec_rx(void *arg) {
             DBG_WARN("SEC: Verification failed for 0x%X! Dropping.", msg->sender.sender_id);
             free(msg); 
         }*/
-        wl1_packet_t *pkt = NULL;
+        //wl1_packet_t *pkt = NULL;
 
         // 1. [핵심] 긴급 큐(Urgent) 먼저 확인
-        pkt = Q_pop_nowait(&q_filter_sec_urgent); // 블로킹 없이 즉시 확인
+        //pkt = Q_pop_nowait(&q_filter_sec_urgent); // 블로킹 없이 즉시 확인
 
         // 2. 긴급 패킷이 없다면 일반 큐 확인
-        if (pkt == NULL) {
-            pkt = Q_pop(&q_filter_sec_rx); // 일반 패킷은 데이터가 올 때까지 대기
-        }
+        //if (pkt == NULL) {
+           // pkt = Q_pop(&q_filter_sec_rx); // 일반 패킷은 데이터가 올 때까지 대기
+       // }
 
-        if (pkt == NULL) {
-            usleep(1000); 
-            continue;
-        }
+       // if (pkt == NULL) {
+           // usleep(1000); 
+           // continue;
+    //    }
 
         // --- 이후 보안 검증 로직 수행 ---
         // VerifySignature(pkt); ...
@@ -97,12 +120,12 @@ void *thread_sec_rx(void *arg) {
         // 검증 성공 후 다음 단계(T3)로 전송
         //Q_push(&q_sec_rx_pkt, pkt);
         // 4. 보안 검증 수행
-        if (SEC_verify(pkt)) {
-            Q_push(&q_sec_rx_pkt, pkt); 
-        } else {
-            DBG_WARN("SEC: Verification failed for 0x%X! Dropping.", pkt->sender.sender_id);
+        //if (SEC_verify(pkt)) {
+            //Q_push(&q_sec_rx_pkt, pkt); 
+       // } else {
+            //DBG_WARN("SEC: Verification failed for 0x%X! Dropping.", pkt->sender.sender_id);
             free(pkt); 
-        }
+       // }
     }
     //}
     //return NULL;  

@@ -12,8 +12,9 @@
 extern volatile bool g_keep_running;
 
 //extern queue_t q_rx_filter;      // RX 스레드가 수신 패킷을 넣는 큐 (필터링 대기)
-extern queue_t q_rx_sec_rx; 
+//extern queue_t q_rx_sec_rx; 
 extern queue_t q_sec_tx_wl_tx;   // TX 스레드가 송신할 패킷을 가져오는 큐
+extern queue_t q_rx_filter;
 
  wl_ctx_t tx_ctx;
  wl_ctx_t rx_ctx;
@@ -63,8 +64,8 @@ void *thread_rx(void *arg) {
             //printf("\n\033[1;32m[T1-RX] Packet Received!\033[0m\n" );
             DBG_INFO("\033[1;32m[RX] Packet Received!\033[0m");
             // 수신 성공 시 필터링 큐에 넣기 (필터 통과 후 보안 큐로 감)
-            //Q_push(&q_rx_filter, pkt);
-             Q_push(&q_rx_sec_rx, pkt);
+            Q_push(&q_rx_filter, pkt);
+             //Q_push(&q_rx_sec_rx, pkt);
             //printf("pushing to q_rx_filter.\n");
             printf("\n");
             fflush(stdout);

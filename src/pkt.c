@@ -67,15 +67,14 @@ void *sub_thread_pkt_tx(void *arg) {
                 
                 /* --- [1] HEADER 조립 --- */
                 pkt->header.version  = 0x01;
-                //pkt->header.msg_type = 0x03; // WL-3 기반 사고 알림 타입
-                pkt->header.msg_type = wl3->type; 
+                pkt->header.msg_type = 0x00; // 차량 송신
                 pkt->header.ttl      = 3;    // 최초 발생 패킷 TTL 설정
                 pkt->header.reserved = 0x00;
 
 
                 memcpy(&(pkt->accident.direction), (uint8_t *)wl3 + 5, 20);
-                /* --- [3] 앞뒤 부족한 GPS 정보는 직접 참조(Reference)로 주입 --- */
-                // 위도/경도/고도는 WL-3에 없으므로 g_driving_status에서 직접 가져옵니다.
+                /* --- [3] GPS 정보는 직접 참조(Reference)로 주입 --- */
+                // 위도/경도/고도는 WL-3에 없으므로 g_driving_status에서 가져옴.
                 pkt->accident.lat_uDeg  = (int32_t)(g_driving_status.lat * 1000000.0);
                 pkt->accident.lon_uDeg  = (int32_t)(g_driving_status.lon * 1000000.0);
                 pkt->accident.alt_mm    = (int32_t)(g_driving_status.alt * 1000.0);
@@ -83,7 +82,7 @@ void *sub_thread_pkt_tx(void *arg) {
 
 
                 /* --- [4] 로그 출력 (ID, Lane, Sev, Time, Dir) --- */
-                // memcpy로 데이터가 잘 들어왔는지 확인합니다.
+                // memcpy로 데이터가 잘 들어왔는지 확인
                 DBG_INFO("\x1b[32m[PKT-TX] 내 사고 조립 완료 (ACC_ID: 0x%lX, Lane: %d, Sev: %d, Time: %lu, Dir: %d)\x1b[0m", 
                     pkt->accident.accident_id, 
                     pkt->accident.lane, 
@@ -135,24 +134,7 @@ void *sub_thread_pkt_tx(void *arg) {
 }
 
 
-// --- [필터] 수신 패킷 → 우선 필터링 후 보안 큐에 전달 ---
-/*void *sub_thread_filter(void *arg) {
-    (void)arg;
-    DBG_INFO("  - Filter Sub-thread started (q_rx_filter -> q_rx_sec_rx).");
 
-    while (g_keep_running) {
-        wl1_packet_t *pkt = (wl1_packet_t *)Q_pop(&q_rx_filter);
-        if (!pkt) break;
-
-        // 자기 패킷은 보안 모듈로 넘기지 않고 폐기
-        if (pkt->sender.sender_id == g_sender_id) {
-            free(pkt);
-            continue;
-        }
-        Q_push(&q_rx_sec_rx, pkt);
-    }
-    return NULL;
-}*/
 
 // --- [PKT-RX] 수신 전담 서브 스레드 (필터 통과·보안 검증 완료 패킷만 수신) ---
 void *sub_thread_pkt_rx(void *arg) {
@@ -166,12 +148,12 @@ void *sub_thread_pkt_rx(void *arg) {
         if (rx_pkt) {
             // 자기 패킷 필터링 로직
             // g_sender_id는 메인에서 선언된 내 기기의 ID 
-            if (rx_pkt->sender.sender_id == g_sender_id) {
+            /*if (rx_pkt->sender.sender_id == g_sender_id) {
                 DBG_INFO("PKT-RX: Loopback packet detected (ID: 0x%X). Self-dropping.", 
                           rx_pkt->sender.sender_id);
                 free(rx_pkt); // VAL로 넘기지 않고 여기서 메모리 해제
                 continue;     // 다음 패킷 대기
-            }
+            }*/
             DBG_INFO("PKT-RX: Incoming Packet (Sender: 0x%lX, Accident: 0x%lX)", 
                      rx_pkt->sender.sender_id, rx_pkt->accident.accident_id);
             // 2. [추가] VAL 스레드(T4)로 데이터 배달
@@ -179,7 +161,7 @@ void *sub_thread_pkt_rx(void *arg) {
             if (to_val) {
                 memcpy(to_val, rx_pkt, sizeof(wl1_packet_t));
                 Q_push(&q_pkt_val, to_val); // VAL 큐로 전달
-                printf("[DEBUG-PKT] Packet pushed to q_pkt_val\n"); 
+                //printf("[DEBUG-PKT] Packet pushed to q_pkt_val\n"); 
             }
             // [4] 판단 모듈(VAL, T4)로 전달하여 1km 필터링 및 사고 관리 수행
         }
@@ -196,7 +178,7 @@ void *sub_thread_pkt_rx(void *arg) {
             Q_push(&q_pkt_val, to_val);
             printf("[DEBUG-PKT] Packet pushed to q_pkt_val\n");
         }*/
-        free(rx_pkt);
+        //free(rx_pkt);
     }
     return NULL;
 }

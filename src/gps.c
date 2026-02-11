@@ -41,7 +41,8 @@ void *thread_gps(void *arg) {
     double step = 0.0001;
 
      // [고정값 설정] 차2 기준 => 차1로부터 사고 정보 수신하는 지 확인하기 위해서 임시로 추가함.
-    double current_lat = 37.5654; // (사고차와 논리적 거리 약 400m) 
+    //double current_lat = 37.5654; // (사고차와 논리적 거리 약 800m) 7.5618에서 7.5654로 이동하면 약 800m 접근하는 시뮬레이션이 된다.
+    double current_lat = 37.5618;
     double current_lon = 126.9780;
     double current_alt = 15.0; // 고도 기본값
 
@@ -72,8 +73,8 @@ void *thread_gps(void *arg) {
         //}
         // 만약 특정 지점까지 가면 멈추거나 리셋하는 로직 (선택사항)
         //if (current_lat < 37.5704) {
-        if (current_lat > 37.5800) {
-            current_lat = 37.5654; // 다시 처음 위치로 리셋 (무한 반복 테스트용)
+        if (current_lat > 37.5645) {
+            current_lat = 37.5618; // 다시 처음 위치로 리셋 (무한 반복 테스트용)
             DBG_INFO("GPS: 위치 리셋 (시뮬레이션 반복)");
         }
     }

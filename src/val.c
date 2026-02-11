@@ -15,6 +15,7 @@
 #include "val_msg.h"
 #include "driving_mgr.h"
 #include "proto_wl2.h"
+#include "v2x_util.h"
 //#include "i2c_io.h"
 
 #define MAX_ACCIDENTS 20
@@ -81,7 +82,7 @@ void *thread_val(void *arg) {
         wl1_packet_t *rx = Q_pop(&q_pkt_val);
     
         if (rx) {
-            DBG_INFO("[DEBUG-VAL] >>> VAL Controller Got Data! From: 0x%X\n", rx->sender.sender_id);
+            DBG_INFO("thread_val Got Data!\n");
             
             // 1. 내 현재 상태 스냅샷 가져오기
             pthread_mutex_lock(&g_driving_status.lock);
@@ -105,19 +106,20 @@ void *thread_val(void *arg) {
             double alt_diff = fabs(my_alt - target_alt);
             int head_diff = get_angle_diff(my_heading, acc_heading);
 
-            printf("[CHECK-VAL] 수신: From 0x%X, 거리:%.2fm, 고도차:%.1fm, 방향차:%d도\n", 
+            DBG_INFO("[CHECK] 수신: From 0x%X, 거리:%.6fm, 고도차:%.1fm, 방향차:%d도\n", 
                     rx->sender.sender_id, dist_2d, alt_diff, head_diff);
+            
             
             // 유효 범위 및 방향성 필터링
             // 내 패킷 제외 && 거리/고도 유효
-            if (rx->sender.sender_id != g_sender_id && dist_2d < DIST_LIMIT && alt_diff < ALT_LIMIT) {
+            if (dist_2d < DIST_LIMIT && alt_diff < ALT_LIMIT) {
                 
                 // 동일 방향성 확인 (45도 이내)
                 if (head_diff <= HEADING_LIMIT) {
                     int mode = (dist_2d > 500.0) ? MODE_ALERT : MODE_RELAY;
                     uint16_t display_dist = (uint16_t)dist_2d;
 
-                    printf("\x1b[1;32m[VAL-WARN] 동일 방향 사고! LCD 출력 시도\x1b[0m\n");
+                    //printf("\x1b[1;32m[VAL-WARN] 동일 방향 사고! LCD 출력 시도\x1b[0m\n");
                     //LCD_display_v2x_mode(mode, rx->sender.sender_id, rx->accident.accident_id, display_dist, rx->accident.lane, rx->accident.type);
 
                     // --- 사고 리스트 업데이트 ---
@@ -142,31 +144,38 @@ void *thread_val(void *arg) {
                         memcpy(&accident_list[target_idx].data.accident, &rx->accident, sizeof(wl1_accident_t));
                         accident_list[target_idx].data.analysis.dist_3d = dist_2d;
                         accident_list[target_idx].data.analysis.is_danger = (dist_2d < 100.0);
-                        DBG_INFO("[VAL-DBG] accident_list[%d] 등록 -> ID:0x%lX (WL-2 후보)\n", target_idx, rx->accident.accident_id);
+                        DBG_INFO("accident_list[%d] 등록 -> ID:0x%lX (WL-2 후보)\n", target_idx, rx->accident.accident_id);
                     }
                 } else {
-                    DBG_INFO("\x1b[1;33m[VAL-SKIP] 반대 방향 사고 무시 (차이: %d도)\x1b[0m\n", head_diff);
+                    DBG_INFO("\x1b[1;33m[SKIP] 반대 방향 사고 무시 (차이: %d도)\x1b[0m\n", head_diff);
                 }
 
-                // --- 재전송(Relay) 로직 (방향 무관하게 수행) ---
+                // --- 재전송(Relay) 로직  ---
                 if (rx->header.ttl > 0) {
+                    DBG_INFO("DEBUG: dist_2d = %f, threshold = 500.0\n", dist_2d);
+                    if (dist_2d <= 500.0) {
                     wl1_packet_t *relay = malloc(sizeof(wl1_packet_t));
                     if (relay) {
                         memcpy(relay, rx, sizeof(wl1_packet_t));
                         relay->header.ttl--;
                         relay->sender.sender_id = g_sender_id;
                         Q_push(&q_val_pkt_tx, relay);
-                        DBG_INFO("[RELAY-ACT] 사고 0x%lX 패킷 중계 큐 삽입\n", relay->accident.accident_id);
+                        DBG_INFO("[RELAY-ACT] 사고 0x%lX 정보 재전송 큐 삽입\n", relay->accident.accident_id);
+                    }
+                    } else {
+                    // 500m보다 멀면 재전송하지 않음
+                    DBG_INFO("[RELAY-SKIP] 사고 0x%lX 재전송 건너뜀 (거리 %.1fm: 500m 초과)", 
+                     rx->accident.accident_id, dist_2d);
                     }
                 }
             } else {
                 /* WL-2 로그 원인 추적: 여기서 걸리면 accident_list에 안 쌓임 */
                 if (rx->sender.sender_id == g_sender_id)
-                    printf("[VAL-DBG] 패킷 제외: sender_id == 내 ID (0x%X)\n", (unsigned)g_sender_id);
+                    DBG_INFO("패킷 제외: sender_id == 내 ID (0x%X)\n", (unsigned)g_sender_id);
                 else if (dist_2d >= DIST_LIMIT)
-                    printf("[VAL-DBG] 패킷 제외: 거리 %.0fm >= %.0fm\n", dist_2d, DIST_LIMIT);
+                    DBG_INFO(" 패킷 제외: 거리 %.0fm >= %.0fm\n", dist_2d, DIST_LIMIT);
                 else if (alt_diff >= ALT_LIMIT)
-                    printf("[VAL-DBG] 패킷 제외: 고도차 %.1fm >= %.1fm\n", alt_diff, ALT_LIMIT);
+                    DBG_INFO(" 패킷 제외: 고도차 %.1fm >= %.1fm\n", alt_diff, ALT_LIMIT);
             }
             // 수신 패킷 메모리 해제 (모든 로직 종료 후 한 번만)
             free(rx);
@@ -287,10 +296,10 @@ void *thread_val(void *arg) {
                 //wl2->sev_rsv = (accident_list[best_idx].data.analysis.is_danger ? 0x10 : 0x00);
                 
                 Q_push(&q_val_yocto, wl2);
-                printf("[VAL] WL-2 보고 -> ID: 0x%lX, Dist: %.1fm\n",
-                       (unsigned long)accident_list[best_idx].data.accident.accident_id, min_dist);
-                DBG_INFO("VAL: Reporting Nearest -> ID: 0x%lX, Dist: %.1fm",
-                         accident_list[best_idx].data.accident.accident_id, min_dist);
+                DBG_INFO("[VAL] WL-2 보고 -> ID: 0x%lX, Dist: %dm\n",
+                       (unsigned long)accident_list[best_idx].data.accident.accident_id, (uint16_t)min_dist);
+                DBG_INFO("VAL: Reporting Nearest -> ID: 0x%lX, Dist: %dm",
+                         accident_list[best_idx].data.accident.accident_id, (uint16_t)min_dist);
                 /* 38474 포트로 바이너리 전송 (방향 L/F/R, 거리, 위험도 1~3) */
                 {
                     uint8_t lane = accident_list[best_idx].data.accident.lane;

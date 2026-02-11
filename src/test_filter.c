@@ -15,7 +15,7 @@ wl1_packet_t* create_test_packet(uint32_t s_id, double lat_offset, double lon_of
     wl1_packet_t *pkt = (wl1_packet_t *)malloc(sizeof(wl1_packet_t));
     memset(pkt, 0, sizeof(wl1_packet_t));
 
-    pkt->header.msg_type = 0x01; // 사고 메시지
+    pkt->header.msg_type = 0x00; // 사고 메시지
     pkt->sender.sender_id = s_id;
     
     // 내 현재 위치 기준으로 상대적 좌표 설정 (uDeg 단위)
